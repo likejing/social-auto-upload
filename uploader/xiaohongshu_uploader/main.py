@@ -5,7 +5,7 @@ from playwright.async_api import Playwright, async_playwright, Page
 import os
 import asyncio
 
-from conf import LOCAL_CHROME_PATH, LOCAL_CHROME_HEADLESS
+from conf import LOCAL_CHROME_PATH, LOCAL_CHROME_HEADLESS, DEFAULT_BROWSER_TYPE
 from utils.base_social_media import set_init_script
 from utils.log import xiaohongshu_logger
 
@@ -64,7 +64,8 @@ async def xiaohongshu_cookie_gen(account_file):
 
 
 class XiaoHongShuVideo(object):
-    def __init__(self, title, file_path, tags, publish_date: datetime, account_file, thumbnail_path=None):
+    def __init__(self, title, file_path, tags, publish_date: datetime, account_file, thumbnail_path=None,
+                 browser_type=None, bitbrowser_id=None):
         self.title = title  # 视频标题
         self.file_path = file_path
         self.tags = tags
@@ -74,6 +75,9 @@ class XiaoHongShuVideo(object):
         self.local_executable_path = LOCAL_CHROME_PATH
         self.headless = LOCAL_CHROME_HEADLESS
         self.thumbnail_path = thumbnail_path
+        # 比特浏览器支持
+        self.browser_type = browser_type or DEFAULT_BROWSER_TYPE
+        self.bitbrowser_id = bitbrowser_id
 
     async def set_schedule_time_xiaohongshu(self, page, publish_date):
         print("  [-] 正在设置定时发布时间...")
@@ -106,18 +110,35 @@ class XiaoHongShuVideo(object):
         xiaohongshu_logger.info('视频出错了，重新上传中')
         await page.locator('div.progress-div [class^="upload-btn-input"]').set_input_files(self.file_path)
 
-    async def upload(self, playwright: Playwright) -> None:
-        # 使用 Chromium 浏览器启动一个浏览器实例
-        if self.local_executable_path:
-            browser = await playwright.chromium.launch(headless=self.headless, executable_path=self.local_executable_path)
+    async def upload(self, playwright: Playwright = None) -> None:
+        # 使用统一的浏览器创建接口
+        if self.browser_type == "bitbrowser" and self.bitbrowser_id:
+            # 比特浏览器模式
+            from utils.bitbrowser_connector import BitBrowserConnector
+            from conf import BIT_BROWSER_URL
+
+            connector = BitBrowserConnector(BIT_BROWSER_URL)
+            browser, context = await connector.get_or_create_browser(
+                browser_id=self.bitbrowser_id,
+                headless=self.headless,
+                account_file=f"{self.account_file}"
+            )
+            if not browser:
+                xiaohongshu_logger.error("无法连接到比特浏览器")
+                return
         else:
-            browser = await playwright.chromium.launch(headless=self.headless)
-        # 创建一个浏览器上下文，使用指定的 cookie 文件
-        context = await browser.new_context(
-            viewport={"width": 1600, "height": 900},
-            storage_state=f"{self.account_file}"
-        )
-        context = await set_init_script(context)
+            # Playwright模式（原有逻辑）
+            # 使用 Chromium 浏览器启动一个浏览器实例
+            if self.local_executable_path:
+                browser = await playwright.chromium.launch(headless=self.headless, executable_path=self.local_executable_path)
+            else:
+                browser = await playwright.chromium.launch(headless=self.headless)
+            # 创建一个浏览器上下文，使用指定的 cookie 文件
+            context = await browser.new_context(
+                viewport={"width": 1600, "height": 900},
+                storage_state=f"{self.account_file}"
+            )
+            context = await set_init_script(context)
 
         # 创建一个新的页面
         page = await context.new_page()
@@ -238,10 +259,27 @@ class XiaoHongShuVideo(object):
 
         await context.storage_state(path=self.account_file)  # 保存cookie
         xiaohongshu_logger.success('  [-]cookie更新完毕！')
-        await asyncio.sleep(2)  # 这里延迟是为了方便眼睛直观的观看
-        # 关闭浏览器上下文和浏览器实例
-        await context.close()
-        await browser.close()
+        await asyncio.sleep(2)  # ���里延迟是为了方便眼睛直观的观看
+
+        # 根据浏览器类型选择关闭方式
+        if self.browser_type == "bitbrowser" and self.bitbrowser_id:
+            # 比特浏览器模式：通过API关闭，不关闭context（context是浏览器已有的）
+            # 关闭所有打开的页面
+            pages = context.pages
+            for page in pages:
+                try:
+                    await page.close()
+                except:
+                    pass
+            # 通过API关闭比特浏览器窗口
+            from utils.bitbrowser_connector import BitBrowserConnector
+            from conf import BIT_BROWSER_URL
+            connector = BitBrowserConnector(BIT_BROWSER_URL)
+            await connector.close_browser(self.bitbrowser_id, delay=2.0)
+        else:
+            # Playwright模式：关闭context和browser
+            await context.close()
+            await browser.close()
     
     async def set_thumbnail(self, page: Page, thumbnail_path: str):
         if thumbnail_path:
@@ -362,7 +400,11 @@ class XiaoHongShuVideo(object):
             return False
 
     async def main(self):
-        async with async_playwright() as playwright:
-            await self.upload(playwright)
+        # 比特浏览器模式不需要playwright参数
+        if self.browser_type == "bitbrowser":
+            await self.upload()
+        else:
+            async with async_playwright() as playwright:
+                await self.upload(playwright)
 
 

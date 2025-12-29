@@ -10,22 +10,42 @@ from pathlib import Path
 from conf import BASE_DIR, LOCAL_CHROME_HEADLESS
 
 # 抖音登录
-async def douyin_cookie_gen(id,status_queue):
+async def douyin_cookie_gen(id, status_queue, browser_type='playwright', bitbrowser_id=None):
     url_changed_event = asyncio.Event()
+    page = None
+    browser = None
+    context = None
+
     async def on_url_change():
         # 检查是否是主框架的变化
         if page.url != original_url:
             url_changed_event.set()
-    async with async_playwright() as playwright:
-        options = {
-            'headless': LOCAL_CHROME_HEADLESS
-        }
-        # Make sure to run headed.
-        browser = await playwright.chromium.launch(**options)
-        # Setup context however you like.
-        context = await browser.new_context()  # Pass any options
-        context = await set_init_script(context)
-        # Pause the page, and start recording manually.
+
+    try:
+        if browser_type == 'bitbrowser' and bitbrowser_id:
+            # 使用比特浏览器
+            from utils.bitbrowser_connector import BitBrowserConnector
+            from conf import BIT_BROWSER_URL
+
+            connector = BitBrowserConnector(BIT_BROWSER_URL)
+            browser, context = await connector.get_or_create_browser(
+                browser_id=bitbrowser_id,
+                headless=False
+            )
+            if not browser:
+                status_queue.put("500")
+                print("无法打开比特浏览器")
+                return None
+        else:
+            # 使用原生Playwright
+            playwright_instance = await async_playwright().start()
+            options = {
+                'headless': LOCAL_CHROME_HEADLESS
+            }
+            browser = await playwright_instance.chromium.launch(**options)
+            context = await browser.new_context()
+            context = await set_init_script(context)
+
         page = await context.new_page()
         await page.goto("https://creator.douyin.com/")
         original_url = page.url
@@ -44,8 +64,14 @@ async def douyin_cookie_gen(id,status_queue):
         except asyncio.TimeoutError:
             print("监听页面跳转超时")
             await page.close()
-            await context.close()
-            await browser.close()
+            if browser_type == 'bitbrowser':
+                from utils.bitbrowser_connector import BitBrowserConnector
+                from conf import BIT_BROWSER_URL
+                connector = BitBrowserConnector(BIT_BROWSER_URL)
+                await connector.close_browser(bitbrowser_id, delay=5.0)
+            else:
+                await context.close()
+                await browser.close()
             status_queue.put("500")
             return None
         uuid_v1 = uuid.uuid1()
@@ -58,44 +84,96 @@ async def douyin_cookie_gen(id,status_queue):
         if not result:
             status_queue.put("500")
             await page.close()
+            if browser_type == 'bitbrowser':
+                from utils.bitbrowser_connector import BitBrowserConnector
+                from conf import BIT_BROWSER_URL
+                connector = BitBrowserConnector(BIT_BROWSER_URL)
+                await connector.close_browser(bitbrowser_id, delay=5.0)
+            else:
+                await context.close()
+                await browser.close()
+            return None
+
+        # 关闭浏览器
+        await page.close()
+        if browser_type == 'bitbrowser':
+            from utils.bitbrowser_connector import BitBrowserConnector
+            from conf import BIT_BROWSER_URL
+            connector = BitBrowserConnector(BIT_BROWSER_URL)
+            await connector.close_browser(bitbrowser_id, delay=5.0)
+        else:
             await context.close()
             await browser.close()
-            return None
-        await page.close()
-        await context.close()
-        await browser.close()
+
         with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                                INSERT INTO user_info (type, filePath, userName, status)
-                                VALUES (?, ?, ?, ?)
-                                ''', (3, f"{uuid_v1}.json", id, 1))
+                                INSERT INTO user_info (type, filePath, userName, status, browser_type, bitbrowser_id)
+                                VALUES (?, ?, ?, ?, ?, ?)
+                                ''', (3, f"{uuid_v1}.json", id, 1, browser_type, bitbrowser_id))
             conn.commit()
             print("✅ 用户状态已记录")
         status_queue.put("200")
+    except Exception as e:
+        print(f"登录过程出错: {e}")
+        status_queue.put("500")
+        if page:
+            try:
+                await page.close()
+            except:
+                pass
+        if browser_type == 'bitbrowser' and bitbrowser_id:
+            from utils.bitbrowser_connector import BitBrowserConnector
+            from conf import BIT_BROWSER_URL
+            connector = BitBrowserConnector(BIT_BROWSER_URL)
+            await connector.close_browser(bitbrowser_id, delay=5.0)
+        elif browser:
+            try:
+                if context:
+                    await context.close()
+                await browser.close()
+            except:
+                pass
 
 
 # 视频号登录
-async def get_tencent_cookie(id,status_queue):
+async def get_tencent_cookie(id, status_queue, browser_type='playwright', bitbrowser_id=None):
     url_changed_event = asyncio.Event()
+    page = None
+    browser = None
+    context = None
+
     async def on_url_change():
         # 检查是否是主框架的变化
         if page.url != original_url:
             url_changed_event.set()
 
-    async with async_playwright() as playwright:
-        options = {
-            'args': [
-                '--lang en-GB'
-            ],
-            'headless': LOCAL_CHROME_HEADLESS,  # Set headless option here
-        }
-        # Make sure to run headed.
-        browser = await playwright.chromium.launch(**options)
-        # Setup context however you like.
-        context = await browser.new_context()  # Pass any options
-        # Pause the page, and start recording manually.
-        context = await set_init_script(context)
+    try:
+        if browser_type == 'bitbrowser' and bitbrowser_id:
+            # 使用比特浏览器
+            from utils.bitbrowser_connector import BitBrowserConnector
+            from conf import BIT_BROWSER_URL
+
+            connector = BitBrowserConnector(BIT_BROWSER_URL)
+            browser, context = await connector.get_or_create_browser(
+                browser_id=bitbrowser_id,
+                headless=False
+            )
+            if not browser:
+                status_queue.put("500")
+                print("无法打开比特浏览器")
+                return None
+        else:
+            # 使用原生Playwright
+            playwright_instance = await async_playwright().start()
+            options = {
+                'args': ['--lang en-GB'],
+                'headless': LOCAL_CHROME_HEADLESS,
+            }
+            browser = await playwright_instance.chromium.launch(**options)
+            context = await browser.new_context()
+            context = await set_init_script(context)
+
         page = await context.new_page()
         await page.goto("https://channels.weixin.qq.com")
         original_url = page.url
@@ -123,8 +201,14 @@ async def get_tencent_cookie(id,status_queue):
             status_queue.put("500")
             print("监听页面跳转超时")
             await page.close()
-            await context.close()
-            await browser.close()
+            if browser_type == 'bitbrowser':
+                from utils.bitbrowser_connector import BitBrowserConnector
+                from conf import BIT_BROWSER_URL
+                connector = BitBrowserConnector(BIT_BROWSER_URL)
+                await connector.close_browser(bitbrowser_id, delay=5.0)
+            else:
+                await context.close()
+                await browser.close()
             return None
         uuid_v1 = uuid.uuid1()
         print(f"UUID v1: {uuid_v1}")
@@ -132,51 +216,103 @@ async def get_tencent_cookie(id,status_queue):
         cookies_dir = Path(BASE_DIR / "cookiesFile")
         cookies_dir.mkdir(exist_ok=True)
         await context.storage_state(path=cookies_dir / f"{uuid_v1}.json")
-        result = await check_cookie(2,f"{uuid_v1}.json")
+        result = await check_cookie(2, f"{uuid_v1}.json")
         if not result:
             status_queue.put("500")
             await page.close()
+            if browser_type == 'bitbrowser':
+                from utils.bitbrowser_connector import BitBrowserConnector
+                from conf import BIT_BROWSER_URL
+                connector = BitBrowserConnector(BIT_BROWSER_URL)
+                await connector.close_browser(bitbrowser_id, delay=5.0)
+            else:
+                await context.close()
+                await browser.close()
+            return None
+
+        # 关闭浏览器
+        await page.close()
+        if browser_type == 'bitbrowser':
+            from utils.bitbrowser_connector import BitBrowserConnector
+            from conf import BIT_BROWSER_URL
+            connector = BitBrowserConnector(BIT_BROWSER_URL)
+            await connector.close_browser(bitbrowser_id, delay=5.0)
+        else:
             await context.close()
             await browser.close()
-            return None
-        await page.close()
-        await context.close()
-        await browser.close()
 
         with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                                INSERT INTO user_info (type, filePath, userName, status)
-                                VALUES (?, ?, ?, ?)
-                                ''', (2, f"{uuid_v1}.json", id, 1))
+                                INSERT INTO user_info (type, filePath, userName, status, browser_type, bitbrowser_id)
+                                VALUES (?, ?, ?, ?, ?, ?)
+                                ''', (2, f"{uuid_v1}.json", id, 1, browser_type, bitbrowser_id))
             conn.commit()
             print("✅ 用户状态已记录")
         status_queue.put("200")
+    except Exception as e:
+        print(f"登录过程出错: {e}")
+        status_queue.put("500")
+        if page:
+            try:
+                await page.close()
+            except:
+                pass
+        if browser_type == 'bitbrowser' and bitbrowser_id:
+            from utils.bitbrowser_connector import BitBrowserConnector
+            from conf import BIT_BROWSER_URL
+            connector = BitBrowserConnector(BIT_BROWSER_URL)
+            await connector.close_browser(bitbrowser_id, delay=5.0)
+        elif browser:
+            try:
+                if context:
+                    await context.close()
+                await browser.close()
+            except:
+                pass
 
 # 快手登录
-async def get_ks_cookie(id,status_queue):
+async def get_ks_cookie(id, status_queue, browser_type='playwright', bitbrowser_id=None):
     url_changed_event = asyncio.Event()
+    page = None
+    browser = None
+    context = None
+
     async def on_url_change():
         # 检查是否是主框架的变化
         if page.url != original_url:
             url_changed_event.set()
-    async with async_playwright() as playwright:
-        options = {
-            'args': [
-                '--lang en-GB'
-            ],
-            'headless': LOCAL_CHROME_HEADLESS,  # Set headless option here
-        }
-        # Make sure to run headed.
-        browser = await playwright.chromium.launch(**options)
-        # Setup context however you like.
-        context = await browser.new_context()  # Pass any options
-        context = await set_init_script(context)
-        # Pause the page, and start recording manually.
+
+    try:
+        if browser_type == 'bitbrowser' and bitbrowser_id:
+            # 使用比特浏览器
+            from utils.bitbrowser_connector import BitBrowserConnector
+            from conf import BIT_BROWSER_URL
+
+            connector = BitBrowserConnector(BIT_BROWSER_URL)
+            browser, context = await connector.get_or_create_browser(
+                browser_id=bitbrowser_id,
+                headless=False
+            )
+            if not browser:
+                status_queue.put("500")
+                print("无法打开比特浏览器")
+                return None
+        else:
+            # 使用原生Playwright
+            playwright_instance = await async_playwright().start()
+            options = {
+                'args': ['--lang en-GB'],
+                'headless': LOCAL_CHROME_HEADLESS,
+            }
+            browser = await playwright_instance.chromium.launch(**options)
+            context = await browser.new_context()
+            context = await set_init_script(context)
+
         page = await context.new_page()
         await page.goto("https://cp.kuaishou.com")
 
-        # 定位并点击“立即登录”按钮（类型为 link）
+        # 定位并点击"立即登录"按钮（类型为 link）
         await page.get_by_role("link", name="立即登录").click()
         await page.get_by_text("扫码登录").click()
         img_locator = page.get_by_role("img", name="qrcode")
@@ -197,8 +333,14 @@ async def get_ks_cookie(id,status_queue):
             status_queue.put("500")
             print("监听页面跳转超时")
             await page.close()
-            await context.close()
-            await browser.close()
+            if browser_type == 'bitbrowser':
+                from utils.bitbrowser_connector import BitBrowserConnector
+                from conf import BIT_BROWSER_URL
+                connector = BitBrowserConnector(BIT_BROWSER_URL)
+                await connector.close_browser(bitbrowser_id, delay=5.0)
+            else:
+                await context.close()
+                await browser.close()
             return None
         uuid_v1 = uuid.uuid1()
         print(f"UUID v1: {uuid_v1}")
@@ -210,45 +352,95 @@ async def get_ks_cookie(id,status_queue):
         if not result:
             status_queue.put("500")
             await page.close()
+            if browser_type == 'bitbrowser':
+                from utils.bitbrowser_connector import BitBrowserConnector
+                from conf import BIT_BROWSER_URL
+                connector = BitBrowserConnector(BIT_BROWSER_URL)
+                await connector.close_browser(bitbrowser_id, delay=5.0)
+            else:
+                await context.close()
+                await browser.close()
+            return None
+
+        # 关闭浏览器
+        await page.close()
+        if browser_type == 'bitbrowser':
+            from utils.bitbrowser_connector import BitBrowserConnector
+            from conf import BIT_BROWSER_URL
+            connector = BitBrowserConnector(BIT_BROWSER_URL)
+            await connector.close_browser(bitbrowser_id, delay=5.0)
+        else:
             await context.close()
             await browser.close()
-            return None
-        await page.close()
-        await context.close()
-        await browser.close()
 
         with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                                        INSERT INTO user_info (type, filePath, userName, status)
-                                        VALUES (?, ?, ?, ?)
-                                        ''', (4, f"{uuid_v1}.json", id, 1))
+                                        INSERT INTO user_info (type, filePath, userName, status, browser_type, bitbrowser_id)
+                                        VALUES (?, ?, ?, ?, ?, ?)
+                                        ''', (4, f"{uuid_v1}.json", id, 1, browser_type, bitbrowser_id))
             conn.commit()
             print("✅ 用户状态已记录")
         status_queue.put("200")
+    except Exception as e:
+        print(f"登录过程出错: {e}")
+        status_queue.put("500")
+        if page:
+            try:
+                await page.close()
+            except:
+                pass
+        if browser_type == 'bitbrowser' and bitbrowser_id:
+            from utils.bitbrowser_connector import BitBrowserConnector
+            from conf import BIT_BROWSER_URL
+            connector = BitBrowserConnector(BIT_BROWSER_URL)
+            await connector.close_browser(bitbrowser_id, delay=5.0)
+        elif browser:
+            try:
+                if context:
+                    await context.close()
+                await browser.close()
+            except:
+                pass
 
 # 小红书登录
-async def xiaohongshu_cookie_gen(id,status_queue):
+async def xiaohongshu_cookie_gen(id, status_queue, browser_type='playwright', bitbrowser_id=None):
     url_changed_event = asyncio.Event()
+    page = None
+    browser = None
+    context = None
 
     async def on_url_change():
         # 检查是否是主框架的变化
         if page.url != original_url:
             url_changed_event.set()
 
-    async with async_playwright() as playwright:
-        options = {
-            'args': [
-                '--lang en-GB'
-            ],
-            'headless': LOCAL_CHROME_HEADLESS,  # Set headless option here
-        }
-        # Make sure to run headed.
-        browser = await playwright.chromium.launch(**options)
-        # Setup context however you like.
-        context = await browser.new_context()  # Pass any options
-        context = await set_init_script(context)
-        # Pause the page, and start recording manually.
+    try:
+        if browser_type == 'bitbrowser' and bitbrowser_id:
+            # 使用比特浏览器
+            from utils.bitbrowser_connector import BitBrowserConnector
+            from conf import BIT_BROWSER_URL
+
+            connector = BitBrowserConnector(BIT_BROWSER_URL)
+            browser, context = await connector.get_or_create_browser(
+                browser_id=bitbrowser_id,
+                headless=False
+            )
+            if not browser:
+                status_queue.put("500")
+                print("无法打开比特浏览器")
+                return None
+        else:
+            # 使用原生Playwright
+            playwright_instance = await async_playwright().start()
+            options = {
+                'args': ['--lang en-GB'],
+                'headless': LOCAL_CHROME_HEADLESS,
+            }
+            browser = await playwright_instance.chromium.launch(**options)
+            context = await browser.new_context()
+            context = await set_init_script(context)
+
         page = await context.new_page()
         await page.goto("https://creator.xiaohongshu.com/")
         await page.locator('img.css-wemwzq').click()
@@ -271,8 +463,14 @@ async def xiaohongshu_cookie_gen(id,status_queue):
             status_queue.put("500")
             print("监听页面跳转超时")
             await page.close()
-            await context.close()
-            await browser.close()
+            if browser_type == 'bitbrowser':
+                from utils.bitbrowser_connector import BitBrowserConnector
+                from conf import BIT_BROWSER_URL
+                connector = BitBrowserConnector(BIT_BROWSER_URL)
+                await connector.close_browser(bitbrowser_id, delay=5.0)
+            else:
+                await context.close()
+                await browser.close()
             return None
         uuid_v1 = uuid.uuid1()
         print(f"UUID v1: {uuid_v1}")
@@ -284,22 +482,56 @@ async def xiaohongshu_cookie_gen(id,status_queue):
         if not result:
             status_queue.put("500")
             await page.close()
+            if browser_type == 'bitbrowser':
+                from utils.bitbrowser_connector import BitBrowserConnector
+                from conf import BIT_BROWSER_URL
+                connector = BitBrowserConnector(BIT_BROWSER_URL)
+                await connector.close_browser(bitbrowser_id, delay=5.0)
+            else:
+                await context.close()
+                await browser.close()
+            return None
+
+        # 关闭浏览器
+        await page.close()
+        if browser_type == 'bitbrowser':
+            from utils.bitbrowser_connector import BitBrowserConnector
+            from conf import BIT_BROWSER_URL
+            connector = BitBrowserConnector(BIT_BROWSER_URL)
+            await connector.close_browser(bitbrowser_id, delay=5.0)
+        else:
             await context.close()
             await browser.close()
-            return None
-        await page.close()
-        await context.close()
-        await browser.close()
 
         with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                           INSERT INTO user_info (type, filePath, userName, status)
-                           VALUES (?, ?, ?, ?)
-                           ''', (1, f"{uuid_v1}.json", id, 1))
+                           INSERT INTO user_info (type, filePath, userName, status, browser_type, bitbrowser_id)
+                           VALUES (?, ?, ?, ?, ?, ?)
+                           ''', (1, f"{uuid_v1}.json", id, 1, browser_type, bitbrowser_id))
             conn.commit()
             print("✅ 用户状态已记录")
         status_queue.put("200")
+    except Exception as e:
+        print(f"登录过程出错: {e}")
+        status_queue.put("500")
+        if page:
+            try:
+                await page.close()
+            except:
+                pass
+        if browser_type == 'bitbrowser' and bitbrowser_id:
+            from utils.bitbrowser_connector import BitBrowserConnector
+            from conf import BIT_BROWSER_URL
+            connector = BitBrowserConnector(BIT_BROWSER_URL)
+            await connector.close_browser(bitbrowser_id, delay=5.0)
+        elif browser:
+            try:
+                if context:
+                    await context.close()
+                await browser.close()
+            except:
+                pass
 
 # a = asyncio.run(xiaohongshu_cookie_gen(4,None))
 # print(a)

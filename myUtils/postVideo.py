@@ -1,4 +1,5 @@
 import asyncio
+import sqlite3
 from pathlib import Path
 
 from conf import BASE_DIR
@@ -8,6 +9,39 @@ from uploader.tencent_uploader.main import TencentVideo
 from uploader.xiaohongshu_uploader.main import XiaoHongShuVideo
 from utils.constant import TencentZoneTypes
 from utils.files_times import generate_schedule_time_next_day
+
+
+def get_account_browser_config_by_filepath(file_path):
+    """从数据库获取账号的浏览器配置（通过文件路径）"""
+    db_path = Path(BASE_DIR / "db" / "database.db")
+
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT browser_type, bitbrowser_id
+                FROM user_info
+                WHERE filePath = ?
+            ''', (file_path,))
+            result = cursor.fetchone()
+
+            if result:
+                return {
+                    "browser_type": result["browser_type"] or "playwright",
+                    "bitbrowser_id": result["bitbrowser_id"]
+                }
+            else:
+                return {
+                    "browser_type": "playwright",
+                    "bitbrowser_id": None
+                }
+    except Exception as e:
+        print(f"获取账号浏览器配置失败: {e}")
+        return {
+            "browser_type": "playwright",
+            "bitbrowser_id": None
+        }
 
 
 def post_video_tencent(title,files,tags,account_file,category=TencentZoneTypes.LIFESTYLE.value,enableTimer=False,videos_per_day = 1, daily_times=None,start_days = 0, is_draft=False):
@@ -25,7 +59,16 @@ def post_video_tencent(title,files,tags,account_file,category=TencentZoneTypes.L
             print(f"视频文件名：{file}")
             print(f"标题：{title}")
             print(f"Hashtag：{tags}")
-            app = TencentVideo(title, str(file), tags, publish_datetimes[index], cookie, category, is_draft)
+
+            # 获取浏览器配置（从cookie文件名反向查找数据库）
+            cookie_filename = cookie.name
+            browser_config = get_account_browser_config_by_filepath(cookie_filename)
+
+            app = TencentVideo(
+                title, str(file), tags, publish_datetimes[index], cookie, category, is_draft,
+                browser_type=browser_config["browser_type"],
+                bitbrowser_id=browser_config["bitbrowser_id"]
+            )
             asyncio.run(app.main(), debug=False)
 
 
@@ -46,7 +89,18 @@ def post_video_DouYin(title,files,tags,account_file,category=TencentZoneTypes.LI
             print(f"视频文件名：{file}")
             print(f"标题：{title}")
             print(f"Hashtag：{tags}")
-            app = DouYinVideo(title, str(file), tags, publish_datetimes[index], cookie, thumbnail_path, productLink, productTitle)
+
+            # 获取浏览器配置（从cookie文件名反向查找数据库）
+            # cookie是Path对象，需要获取文件名
+            cookie_filename = cookie.name
+            browser_config = get_account_browser_config_by_filepath(cookie_filename)
+
+            app = DouYinVideo(
+                title, str(file), tags, publish_datetimes[index], cookie,
+                thumbnail_path, productLink, productTitle,
+                browser_type=browser_config["browser_type"],
+                bitbrowser_id=browser_config["bitbrowser_id"]
+            )
             asyncio.run(app.main(), debug=False)
 
 
@@ -65,7 +119,16 @@ def post_video_ks(title,files,tags,account_file,category=TencentZoneTypes.LIFEST
             print(f"视频文件名：{file}")
             print(f"标题：{title}")
             print(f"Hashtag：{tags}")
-            app = KSVideo(title, str(file), tags, publish_datetimes[index], cookie)
+
+            # 获取浏览器配置（从cookie文件名反向查找数据库）
+            cookie_filename = cookie.name
+            browser_config = get_account_browser_config_by_filepath(cookie_filename)
+
+            app = KSVideo(
+                title, str(file), tags, publish_datetimes[index], cookie,
+                browser_type=browser_config["browser_type"],
+                bitbrowser_id=browser_config["bitbrowser_id"]
+            )
             asyncio.run(app.main(), debug=False)
 
 def post_video_xhs(title,files,tags,account_file,category=TencentZoneTypes.LIFESTYLE.value,enableTimer=False,videos_per_day = 1, daily_times=None,start_days = 0):
@@ -83,7 +146,16 @@ def post_video_xhs(title,files,tags,account_file,category=TencentZoneTypes.LIFES
             print(f"视频文件名：{file}")
             print(f"标题：{title}")
             print(f"Hashtag：{tags}")
-            app = XiaoHongShuVideo(title, file, tags, publish_datetimes, cookie)
+
+            # 获取浏览器配置（从cookie文件名反向查找数据库）
+            cookie_filename = cookie.name
+            browser_config = get_account_browser_config_by_filepath(cookie_filename)
+
+            app = XiaoHongShuVideo(
+                title, file, tags, publish_datetimes, cookie,
+                browser_type=browser_config["browser_type"],
+                bitbrowser_id=browser_config["bitbrowser_id"]
+            )
             asyncio.run(app.main(), debug=False)
 
 

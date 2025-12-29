@@ -16,6 +16,7 @@ export const useAccountStore = defineStore('account', () => {
   // 设置账号列表
   const setAccounts = (accountsData) => {
     // 转换后端返回的数据格式为前端使用的格式
+    // 数据库返回: [id, type, filePath, userName, status, browser_type, bitbrowser_id]
     accounts.value = accountsData.map(item => {
       return {
         id: item[0],
@@ -24,7 +25,9 @@ export const useAccountStore = defineStore('account', () => {
         name: item[3],
         status: item[4] === 1 ? '正常' : '异常',
         platform: platformTypes[item[1]] || '未知',
-        avatar: '/vite.svg' // 默认使用vite.svg作为头像
+        avatar: '/vite.svg', // 默认使用vite.svg作为头像
+        browser_type: item[5] || 'playwright',
+        bitbrowser_id: item[6] || null
       }
     })
   }

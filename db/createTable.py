@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS user_info (
     type INTEGER NOT NULL,
     filePath TEXT NOT NULL,  -- 存储文件路径
     userName TEXT NOT NULL,
-    status INTEGER DEFAULT 0
+    status INTEGER DEFAULT 0,
+    browser_type TEXT DEFAULT 'playwright',  -- 浏览器类型: 'playwright' 或 'bitbrowser'
+    bitbrowser_id TEXT DEFAULT NULL  -- 比特浏览器窗口ID (当browser_type为bitbrowser时使用)
 )
 ''')
 

@@ -362,6 +362,10 @@ def login():
     type = request.args.get('type')
     # 账号名
     id = request.args.get('id')
+    # 浏览器类型 (playwright 或 bitbrowser)
+    browser_type = request.args.get('browser_type', 'playwright')
+    # 比特浏览器窗口ID
+    bitbrowser_id = request.args.get('bitbrowser_id', None)
 
     # 模拟一个用于异步通信的队列
     status_queue = Queue()
@@ -371,7 +375,7 @@ def login():
         print(f"清理队列: {id}")
         del active_queues[id]
     # 启动异步任务线程
-    thread = threading.Thread(target=run_async_function, args=(type,id,status_queue), daemon=True)
+    thread = threading.Thread(target=run_async_function, args=(type, id, status_queue, browser_type, bitbrowser_id), daemon=True)
     thread.start()
     response = Response(sse_stream(status_queue,), mimetype='text/event-stream')
     response.headers['Cache-Control'] = 'no-cache'
@@ -437,6 +441,8 @@ def updateUserinfo():
     user_id = data.get('id')
     type = data.get('type')
     userName = data.get('userName')
+    browser_type = data.get('browser_type', 'playwright')
+    bitbrowser_id = data.get('bitbrowser_id', None)
     try:
         # 获取数据库连接
         with sqlite3.connect(Path(BASE_DIR / "db" / "database.db")) as conn:
@@ -447,9 +453,11 @@ def updateUserinfo():
             cursor.execute('''
                            UPDATE user_info
                            SET type     = ?,
-                               userName = ?
+                               userName = ?,
+                               browser_type = ?,
+                               bitbrowser_id = ?
                            WHERE id = ?;
-                           ''', (type, userName, user_id))
+                           ''', (type, userName, browser_type, bitbrowser_id, user_id))
             conn.commit()
 
         return jsonify({
@@ -632,28 +640,219 @@ def download_cookie():
         }), 500
 
 
+# ==================== 比特浏览器相关API ====================
+
+@app.route('/bitbrowser/health', methods=['GET'])
+def bitbrowser_health():
+    """检查比特浏览器API连接状态"""
+    try:
+        from utils.bitbrowser_api import get_bitbrowser_api
+        from conf import BIT_BROWSER_URL
+
+        api = get_bitbrowser_api(BIT_BROWSER_URL)
+        is_connected = api.health_check()
+
+        if is_connected:
+            return jsonify({
+                "code": 200,
+                "msg": "比特浏览器连接正常",
+                "data": {"connected": True}
+            }), 200
+        else:
+            return jsonify({
+                "code": 500,
+                "msg": "无法连接到比特浏览器API，请确认比特浏览器已启动且Local API端口配置正确",
+                "data": {"connected": False}
+            }), 500
+    except Exception as e:
+        return jsonify({
+            "code": 500,
+            "msg": f"检查连接失败: {str(e)}",
+            "data": {"connected": False}
+        }), 500
+
+
+@app.route('/bitbrowser/list', methods=['GET'])
+def bitbrowser_list():
+    """获取比特浏览器窗口列表"""
+    try:
+        from utils.bitbrowser_api import get_bitbrowser_api
+        from conf import BIT_BROWSER_URL
+
+        # 获取过滤参数
+        name = request.args.get('name', None)
+
+        api = get_bitbrowser_api(BIT_BROWSER_URL)
+        browsers = api.list_browsers(name=name)
+
+        if browsers is not None:
+            return jsonify({
+                "code": 200,
+                "msg": "获取成功",
+                "data": browsers
+            }), 200
+        else:
+            return jsonify({
+                "code": 500,
+                "msg": "获取浏览器列表失败",
+                "data": None
+            }), 500
+    except Exception as e:
+        return jsonify({
+            "code": 500,
+            "msg": f"获取浏览器列表失败: {str(e)}",
+            "data": None
+        }), 500
+
+
+@app.route('/bitbrowser/create', methods=['POST'])
+def bitbrowser_create():
+    """创建新的比特浏览器窗口"""
+    try:
+        from utils.bitbrowser_api import get_bitbrowser_api
+        from conf import BIT_BROWSER_URL
+
+        data = request.get_json()
+        name = data.get('name')
+        platform_url = data.get('platformUrl', '')
+        remark = data.get('remark', '')
+        proxy_config = data.get('proxyConfig', None)
+
+        if not name:
+            return jsonify({
+                "code": 400,
+                "msg": "窗口名称不能为空",
+                "data": None
+            }), 400
+
+        api = get_bitbrowser_api(BIT_BROWSER_URL)
+        browser_id = api.create_browser_for_platform(
+            name=name,
+            platform_url=platform_url,
+            remark=remark,
+            proxy_config=proxy_config
+        )
+
+        if browser_id:
+            return jsonify({
+                "code": 200,
+                "msg": "创建成功",
+                "data": {"browserId": browser_id}
+            }), 200
+        else:
+            return jsonify({
+                "code": 500,
+                "msg": "创建浏览器窗口失败",
+                "data": None
+            }), 500
+    except Exception as e:
+        return jsonify({
+            "code": 500,
+            "msg": f"创建浏览器窗口失败: {str(e)}",
+            "data": None
+        }), 500
+
+
+@app.route('/bitbrowser/detail', methods=['GET'])
+def bitbrowser_detail():
+    """获取比特浏览器窗口详情"""
+    try:
+        from utils.bitbrowser_api import get_bitbrowser_api
+        from conf import BIT_BROWSER_URL
+
+        browser_id = request.args.get('browserId')
+        if not browser_id:
+            return jsonify({
+                "code": 400,
+                "msg": "缺少浏览器ID",
+                "data": None
+            }), 400
+
+        api = get_bitbrowser_api(BIT_BROWSER_URL)
+        detail = api.get_browser_detail(browser_id)
+
+        if detail:
+            return jsonify({
+                "code": 200,
+                "msg": "获取成功",
+                "data": detail
+            }), 200
+        else:
+            return jsonify({
+                "code": 404,
+                "msg": "浏览器窗口不存在",
+                "data": None
+            }), 404
+    except Exception as e:
+        return jsonify({
+            "code": 500,
+            "msg": f"获取浏览器详情失败: {str(e)}",
+            "data": None
+        }), 500
+
+
+@app.route('/bitbrowser/delete', methods=['POST'])
+def bitbrowser_delete():
+    """删除比特浏览器窗口"""
+    try:
+        from utils.bitbrowser_api import get_bitbrowser_api
+        from conf import BIT_BROWSER_URL
+
+        data = request.get_json()
+        browser_id = data.get('browserId')
+
+        if not browser_id:
+            return jsonify({
+                "code": 400,
+                "msg": "缺少浏览器ID",
+                "data": None
+            }), 400
+
+        api = get_bitbrowser_api(BIT_BROWSER_URL)
+        result = api.delete_browser(browser_id)
+
+        if result:
+            return jsonify({
+                "code": 200,
+                "msg": "删除成功",
+                "data": None
+            }), 200
+        else:
+            return jsonify({
+                "code": 500,
+                "msg": "删除失败",
+                "data": None
+            }), 500
+    except Exception as e:
+        return jsonify({
+            "code": 500,
+            "msg": f"删除浏览器窗口失败: {str(e)}",
+            "data": None
+        }), 500
+
+
 # 包装函数：在线程中运行异步函数
-def run_async_function(type,id,status_queue):
+def run_async_function(type, id, status_queue, browser_type='playwright', bitbrowser_id=None):
     match type:
         case '1':
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            loop.run_until_complete(xiaohongshu_cookie_gen(id, status_queue))
+            loop.run_until_complete(xiaohongshu_cookie_gen(id, status_queue, browser_type, bitbrowser_id))
             loop.close()
         case '2':
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            loop.run_until_complete(get_tencent_cookie(id,status_queue))
+            loop.run_until_complete(get_tencent_cookie(id, status_queue, browser_type, bitbrowser_id))
             loop.close()
         case '3':
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            loop.run_until_complete(douyin_cookie_gen(id,status_queue))
+            loop.run_until_complete(douyin_cookie_gen(id, status_queue, browser_type, bitbrowser_id))
             loop.close()
         case '4':
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            loop.run_until_complete(get_ks_cookie(id,status_queue))
+            loop.run_until_complete(get_ks_cookie(id, status_queue, browser_type, bitbrowser_id))
             loop.close()
 
 # SSE 流生成器函数

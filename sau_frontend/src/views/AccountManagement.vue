@@ -382,11 +382,65 @@
           </el-select>
         </el-form-item>
         <el-form-item label="名称" prop="name">
-          <el-input 
-            v-model="accountForm.name" 
-            placeholder="请输入账号名称" 
+          <el-input
+            v-model="accountForm.name"
+            placeholder="请输入账号名称"
             :disabled="sseConnecting"
           />
+        </el-form-item>
+
+        <!-- 浏览器类型选择 -->
+        <el-form-item label="浏览器类型" prop="browser_type">
+          <el-select
+            v-model="accountForm.browser_type"
+            placeholder="请选择浏览器类型"
+            style="width: 100%"
+            :disabled="sseConnecting"
+            @change="handleBrowserTypeChange"
+          >
+            <el-option label="Playwright (默认)" value="playwright" />
+            <el-option label="比特浏览器" value="bitbrowser" />
+          </el-select>
+        </el-form-item>
+
+        <!-- 比特浏览器窗口ID选择 -->
+        <el-form-item v-if="accountForm.browser_type === 'bitbrowser'" label="比特浏览器窗口" prop="bitbrowser_id">
+          <div style="display: flex; gap: 8px;">
+            <el-select
+              v-model="accountForm.bitbrowser_id"
+              placeholder="请选择比特浏览器窗口"
+              style="flex: 1"
+              filterable
+              :disabled="sseConnecting"
+              :loading="bitbrowserListLoading"
+            >
+              <el-option
+                v-for="browser in bitbrowserList"
+                :key="browser.id"
+                :label="browser.name || browser.id"
+                :value="browser.id"
+              >
+                <span>{{ browser.name || browser.id }}</span>
+                <span style="float: right; color: #8492a6; font-size: 12px;">{{ browser.id }}</span>
+              </el-option>
+            </el-select>
+            <el-button
+              type="primary"
+              @click="fetchBitBrowserList"
+              :icon="Refresh"
+              :loading="bitbrowserListLoading"
+              :disabled="sseConnecting"
+            >
+              刷新
+            </el-button>
+            <el-button
+              type="success"
+              @click="showCreateBitBrowserDialog"
+              :disabled="sseConnecting"
+            >
+              新建
+            </el-button>
+          </div>
         </el-form-item>
         
         <!-- 二维码显示区域 -->
@@ -419,6 +473,34 @@
             :disabled="sseConnecting"
           >
             {{ sseConnecting ? '请求中' : '确认' }}
+          </el-button>
+        </span>
+      </template>
+    </el-dialog>
+
+    <!-- 创建比特浏览器窗口对话框 -->
+    <el-dialog
+      v-model="createBitBrowserDialogVisible"
+      title="创建比特浏览器窗口"
+      width="500px"
+      :close-on-click-modal="false"
+    >
+      <el-form :model="bitBrowserForm" label-width="100px" ref="bitBrowserFormRef">
+        <el-form-item label="窗口名称" prop="name" :rules="[{ required: true, message: '请输入窗口名称', trigger: 'blur' }]">
+          <el-input v-model="bitBrowserForm.name" placeholder="请输入窗口名称" />
+        </el-form-item>
+        <el-form-item label="平台URL" prop="platformUrl">
+          <el-input v-model="bitBrowserForm.platformUrl" placeholder="例如: https://www.douyin.com" />
+        </el-form-item>
+        <el-form-item label="备注" prop="remark">
+          <el-input v-model="bitBrowserForm.remark" type="textarea" placeholder="请输入备注（可选）" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="createBitBrowserDialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="submitCreateBitBrowser" :loading="createBitBrowserLoading">
+            创建
           </el-button>
         </span>
       </template>
@@ -591,7 +673,9 @@ const accountForm = reactive({
   id: null,
   name: '',
   platform: '',
-  status: '正常'
+  status: '正常',
+  browser_type: 'playwright',
+  bitbrowser_id: null
 })
 
 // 表单验证规则
@@ -605,6 +689,98 @@ const sseConnecting = ref(false)
 const qrCodeData = ref('')
 const loginStatus = ref('')
 
+// 比特浏览器相关
+const bitbrowserList = ref([])
+const bitbrowserListLoading = ref(false)
+const createBitBrowserDialogVisible = ref(false)
+const createBitBrowserLoading = ref(false)
+const bitBrowserFormRef = ref(null)
+const bitBrowserForm = reactive({
+  name: '',
+  platformUrl: '',
+  remark: ''
+})
+
+// 获取比特浏览器窗口列表
+const fetchBitBrowserList = async () => {
+  bitbrowserListLoading.value = true
+  try {
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5409'
+    const response = await fetch(`${baseUrl}/bitbrowser/list`)
+    const result = await response.json()
+
+    if (result.code === 200 && result.data) {
+      bitbrowserList.value = result.data
+    } else {
+      ElMessage.error(result.msg || '获取比特浏览器列表失败')
+    }
+  } catch (error) {
+    console.error('获取比特浏览器列表失败:', error)
+    ElMessage.error('获取比特浏览��列表失败')
+  } finally {
+    bitbrowserListLoading.value = false
+  }
+}
+
+// 显示创建比特浏览器窗口对话框
+const showCreateBitBrowserDialog = () => {
+  Object.assign(bitBrowserForm, {
+    name: '',
+    platformUrl: '',
+    remark: ''
+  })
+  createBitBrowserDialogVisible.value = true
+}
+
+// 提交创建比特浏览器窗口
+const submitCreateBitBrowser = async () => {
+  if (!bitBrowserForm.name) {
+    ElMessage.warning('请输入窗口名称')
+    return
+  }
+
+  createBitBrowserLoading.value = true
+  try {
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5409'
+    const response = await fetch(`${baseUrl}/bitbrowser/create`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        name: bitBrowserForm.name,
+        platformUrl: bitBrowserForm.platformUrl || '',
+        remark: bitBrowserForm.remark || ''
+      })
+    })
+    const result = await response.json()
+
+    if (result.code === 200 && result.data) {
+      ElMessage.success('比特浏览器窗口创建成功')
+      createBitBrowserDialogVisible.value = false
+      // 自动选择新创建的窗口
+      accountForm.bitbrowser_id = result.data.browserId
+      // 刷新列表
+      await fetchBitBrowserList()
+    } else {
+      ElMessage.error(result.msg || '创建比特浏览器窗口失败')
+    }
+  } catch (error) {
+    console.error('创建比特浏览器窗口失败:', error)
+    ElMessage.error('创建比特浏览器窗口失败')
+  } finally {
+    createBitBrowserLoading.value = false
+  }
+}
+
+// 处理浏览器类型变更
+const handleBrowserTypeChange = (value) => {
+  if (value === 'bitbrowser' && bitbrowserList.value.length === 0) {
+    // 首次选择比特浏览器时，自动加载列表
+    fetchBitBrowserList()
+  }
+}
+
 // 添加账号
 const handleAddAccount = () => {
   dialogType.value = 'add'
@@ -612,7 +788,9 @@ const handleAddAccount = () => {
     id: null,
     name: '',
     platform: '',
-    status: '正常'
+    status: '正常',
+    browser_type: 'playwright',
+    bitbrowser_id: null
   })
   // 重置SSE状态
   sseConnecting.value = false
@@ -622,14 +800,22 @@ const handleAddAccount = () => {
 }
 
 // 编辑账号
-const handleEdit = (row) => {
+const handleEdit = async (row) => {
   dialogType.value = 'edit'
   Object.assign(accountForm, {
     id: row.id,
     name: row.name,
     platform: row.platform,
-    status: row.status
+    status: row.status,
+    browser_type: row.browser_type || 'playwright',
+    bitbrowser_id: row.bitbrowser_id || null
   })
+
+  // 如果是比特浏览器类型，加载列表
+  if (accountForm.browser_type === 'bitbrowser') {
+    await fetchBitBrowserList()
+  }
+
   dialogVisible.value = true
 }
 
@@ -748,7 +934,9 @@ const handleReLogin = (row) => {
     id: row.id,
     name: row.name,
     platform: row.platform,
-    status: row.status
+    status: row.status,
+    browser_type: row.browser_type || 'playwright',
+    bitbrowser_id: row.bitbrowser_id || null
   })
 
   // 重置SSE状态
@@ -761,7 +949,7 @@ const handleReLogin = (row) => {
 
   // 立即开始登录流程
   setTimeout(() => {
-    connectSSE(row.platform, row.name)
+    connectSSE(row.platform, row.name, row.browser_type || 'playwright', row.bitbrowser_id)
   }, 300)
 }
 
@@ -783,7 +971,7 @@ const closeSSEConnection = () => {
 }
 
 // 建立SSE连接
-const connectSSE = (platform, name) => {
+const connectSSE = (platform, name, browserType = 'playwright', bitbrowserId = null) => {
   // 关闭可能存在的连接
   closeSSEConnection()
 
@@ -802,9 +990,19 @@ const connectSSE = (platform, name) => {
 
   const type = platformTypeMap[platform] || '1'
 
-  // 创建SSE连接
+  // 创建SSE连接，包含浏览器类型和比特浏览器ID
   const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5409'
-  const url = `${baseUrl}/login?type=${type}&id=${encodeURIComponent(name)}`
+  let url = `${baseUrl}/login?type=${type}&id=${encodeURIComponent(name)}`
+
+  // 添加浏览器类型参数
+  if (browserType) {
+    url += `&browser_type=${encodeURIComponent(browserType)}`
+  }
+
+  // 添加比特浏览器ID参数
+  if (bitbrowserId) {
+    url += `&bitbrowser_id=${encodeURIComponent(bitbrowserId)}`
+  }
 
   eventSource = new EventSource(url)
 
@@ -890,8 +1088,8 @@ const submitAccountForm = () => {
   accountFormRef.value.validate(async (valid) => {
     if (valid) {
       if (dialogType.value === 'add') {
-        // 建立SSE连接
-        connectSSE(accountForm.platform, accountForm.name)
+        // 建立SSE连接，传递浏览器配置
+        connectSSE(accountForm.platform, accountForm.name, accountForm.browser_type || 'playwright', accountForm.bitbrowser_id)
       } else {
         // 编辑账号逻辑
         try {
@@ -907,7 +1105,9 @@ const submitAccountForm = () => {
           const res = await accountApi.updateAccount({
             id: accountForm.id,
             type: type,
-            userName: accountForm.name
+            userName: accountForm.name,
+            browser_type: accountForm.browser_type || 'playwright',
+            bitbrowser_id: accountForm.bitbrowser_id || null
           })
           if (res.code === 200) {
             // 更新状态管理中的账号
